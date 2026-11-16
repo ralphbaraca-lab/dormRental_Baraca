@@ -4,12 +4,12 @@ import com.dormrental.exception.InputClosedException;
 import com.dormrental.exception.ValidationException;
 import com.dormrental.util.DateUtil;
 import com.dormrental.util.Validator;
-
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.EnumSet;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Scanner;
 import java.util.Set;
 
@@ -18,13 +18,13 @@ public class InputHelper {
     private final Scanner scanner;
 
     public InputHelper(Scanner scanner) {
-        this.scanner = scanner;
+        this.scanner = Objects.requireNonNull(scanner, "scanner must not be null");
     }
 
     private String nextLine() {
         try {
             return scanner.nextLine().trim();
-        } catch (NoSuchElementException e) {
+        } catch (NoSuchElementException | IllegalStateException e) {
             throw new InputClosedException();
         }
     }
@@ -45,7 +45,7 @@ public class InputHelper {
         }
     }
 
-    /** Ids are stored in upper case (e.g. TNT-0001), so typing "tnt-0001" works too. */
+    /** IDs are stored in upper case (e.g. TNT-0001), so typing "tnt-0001" works too. */
     public String readId(String prompt) {
         return readRequired(prompt).toUpperCase();
     }
@@ -92,6 +92,9 @@ public class InputHelper {
     }
 
     public int readInt(String prompt, int min, int max) {
+        if (min > max) {
+            throw new IllegalArgumentException("min (" + min + ") must not exceed max (" + max + ")");
+        }
         while (true) {
             String line = readLine(prompt + " [" + min + "-" + max + "]");
             try {
@@ -133,8 +136,15 @@ public class InputHelper {
     }
 
     private static BigDecimal parseMoney(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        String cleaned = text.replace(",", "").trim();
+        if (cleaned.startsWith("₱")) {
+            cleaned = cleaned.substring(1).trim();
+        }
         try {
-            return new BigDecimal(text.replace(",", "")).setScale(2, RoundingMode.HALF_UP);
+            return new BigDecimal(cleaned).setScale(2, RoundingMode.HALF_UP);
         } catch (NumberFormatException e) {
             return null;
         }
@@ -151,8 +161,9 @@ public class InputHelper {
     }
 
     public LocalDate readDateOrDefault(String prompt, LocalDate defaultValue) {
+        String defaultLabel = (defaultValue != null) ? DateUtil.format(defaultValue) : "none";
         while (true) {
-            String line = readLine(prompt + " (yyyy-MM-dd, blank = " + DateUtil.format(defaultValue) + ")");
+            String line = readLine(prompt + " (yyyy-MM-dd, blank = " + defaultLabel + ")");
             if (line.isEmpty()) {
                 return defaultValue;
             }
@@ -166,42 +177,55 @@ public class InputHelper {
 
     /** Shows a numbered list and returns the option the user picks. */
     public <T> T readOption(String prompt, T[] options) {
-        for (int i = 0; i < options.length; i++) {
-            System.out.printf("  %d. %s%n", i + 1, options[i]);
-        }
+        validateOptions(options);
+        printOptions(options);
         int choice = readInt(prompt, 1, options.length);
         return options[choice - 1];
     }
 
     public <E extends Enum<E>> E readEnum(String prompt, Class<E> type) {
+        Objects.requireNonNull(type, "type must not be null");
         return readOption(prompt, type.getEnumConstants());
     }
 
     /** Lets the user pick any number of enum values, e.g. "1,3,4". Blank means none. */
     public <E extends Enum<E>> Set<E> readEnumSet(String prompt, Class<E> type) {
+        Objects.requireNonNull(type, "type must not be null");
         E[] values = type.getEnumConstants();
-        for (int i = 0; i < values.length; i++) {
-            System.out.printf("  %d. %s%n", i + 1, values[i]);
-        }
+        validateOptions(values);
+        printOptions(values);
+
         while (true) {
             String line = readLine(prompt + " (numbers separated by commas, blank for none)");
+            if (line.isEmpty()) {
+                return EnumSet.noneOf(type);
+            }
+            if (line.contains(",,")) {
+                Display.error("Enter numbers between 1 and " + values.length + ", separated by commas.");
+                continue;
+            }
+
             Set<E> result = EnumSet.noneOf(type);
             boolean valid = true;
-            if (!line.isEmpty()) {
-                for (String token : line.split(",")) {
-                    try {
-                        int number = Integer.parseInt(token.trim());
-                        if (number < 1 || number > values.length) {
-                            valid = false;
-                            break;
-                        }
-                        result.add(values[number - 1]);
-                    } catch (NumberFormatException e) {
+            for (String token : line.split(",")) {
+                String trimmed = token.trim();
+                if (trimmed.isEmpty()) {
+                    valid = false;
+                    break;
+                }
+                try {
+                    int number = Integer.parseInt(trimmed);
+                    if (number < 1 || number > values.length) {
                         valid = false;
                         break;
                     }
+                    result.add(values[number - 1]);
+                } catch (NumberFormatException e) {
+                    valid = false;
+                    break;
                 }
             }
+
             if (valid) {
                 return result;
             }
@@ -225,5 +249,17 @@ public class InputHelper {
     public void pause() {
         System.out.print(System.lineSeparator() + "Press Enter to continue...");
         nextLine();
+    }
+
+    private static <T> void validateOptions(T[] options) {
+        if (options == null || options.length == 0) {
+            throw new IllegalArgumentException("options must not be null or empty");
+        }
+    }
+
+    private static <T> void printOptions(T[] options) {
+        for (int i = 0; i < options.length; i++) {
+            System.out.printf("  %d. %s%n", i + 1, options[i]);
+        }
     }
 }
