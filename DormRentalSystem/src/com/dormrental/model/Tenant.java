@@ -1,8 +1,8 @@
 package com.dormrental.model;
 
 import com.dormrental.enums.Gender;
-
 import java.time.LocalDate;
+import java.util.Objects;
 
 public class Tenant extends Person {
     private static final long serialVersionUID = 1L;
@@ -19,12 +19,12 @@ public class Tenant extends Person {
                   Gender gender, String school, String homeAddress,
                   String guardianName, String guardianPhone) {
         super(id, firstName, lastName, email, phone);
-        this.gender = gender;
-        this.school = school;
-        this.homeAddress = homeAddress;
-        this.guardianName = guardianName;
-        this.guardianPhone = guardianPhone;
+        this.gender = Objects.requireNonNull(gender, "gender must not be null");
         this.registeredOn = LocalDate.now();
+        setSchool(school);
+        setHomeAddress(homeAddress);
+        setGuardianName(guardianName);
+        setGuardianPhone(guardianPhone);
     }
 
     public Gender getGender() {
@@ -36,7 +36,7 @@ public class Tenant extends Person {
     }
 
     public void setSchool(String school) {
-        this.school = school;
+        this.school = normalizeOptional(school);
     }
 
     public String getHomeAddress() {
@@ -44,7 +44,7 @@ public class Tenant extends Person {
     }
 
     public void setHomeAddress(String homeAddress) {
-        this.homeAddress = homeAddress;
+        this.homeAddress = normalizeOptional(homeAddress);
     }
 
     public String getGuardianName() {
@@ -52,7 +52,7 @@ public class Tenant extends Person {
     }
 
     public void setGuardianName(String guardianName) {
-        this.guardianName = guardianName;
+        this.guardianName = normalizeOptional(guardianName);
     }
 
     public String getGuardianPhone() {
@@ -60,7 +60,7 @@ public class Tenant extends Person {
     }
 
     public void setGuardianPhone(String guardianPhone) {
-        this.guardianPhone = guardianPhone;
+        this.guardianPhone = normalizeOptional(guardianPhone);
     }
 
     public LocalDate getRegisteredOn() {
@@ -73,5 +73,26 @@ public class Tenant extends Person {
 
     public void setActive(boolean active) {
         this.active = active;
+    }
+
+    @Override
+    public String toString() {
+        return "Tenant{" +
+                "gender=" + gender +
+                ", school='" + school + '\'' +
+                ", homeAddress='" + homeAddress + '\'' +
+                ", guardianName='" + guardianName + '\'' +
+                ", guardianPhone='" + guardianPhone + '\'' +
+                ", registeredOn=" + registeredOn +
+                ", active=" + active +
+                '}';
+    }
+
+    private static String normalizeOptional(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }
