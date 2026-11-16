@@ -2,9 +2,12 @@ package com.dormrental.ui;
 
 import com.dormrental.config.AppContext;
 import com.dormrental.exception.AuthenticationException;
+import com.dormrental.model.User;
 import com.dormrental.service.AuthService;
 
 public class LoginScreen {
+    private static final int MAX_ATTEMPTS = 3;
+
     private final InputHelper in;
     private final AppContext ctx;
 
@@ -13,25 +16,49 @@ public class LoginScreen {
         this.ctx = ctx;
     }
 
-    /** Returns true once someone has logged in, or false if the user chose to exit. */
+    /** Returns true once authenticated, or false if the user exits or exceeds max attempts. */
     public boolean run() {
         Display.header("DORM RENTAL SYSTEM - LOGIN");
-        Display.info("  First run? Sign in as '" + AuthService.DEFAULT_ADMIN_USERNAME
-                + "' with password '" + AuthService.DEFAULT_ADMIN_PASSWORD + "' and change it under Administration.");
-        Display.info("  (Leave the username blank to exit.)");
-        while (true) {
-            String username = in.readLine("Username");
-            if (username.isEmpty()) {
+        Display.info("  First run: sign in as '" + AuthService.DEFAULT_ADMIN_USERNAME
+                + "' / '" + AuthService.DEFAULT_ADMIN_PASSWORD
+                + "', then change the password under Administration.");
+        Display.info("  Leave Username blank to exit. Max attempts: " + MAX_ATTEMPTS + ".");
+
+        int failedAttempts = 0;
+
+        while (failedAttempts < MAX_ATTEMPTS) {
+            String rawUsername = in.readLine("Username");
+            if (rawUsername == null || rawUsername.trim().isEmpty()) {
+                Display.info("Exiting login.");
                 return false;
             }
-            String password = in.readLine("Password");
+
+            String username = rawUsername.trim();
+            String rawPassword = in.readLine("Password");
+            String password = rawPassword == null ? "" : rawPassword;
+
             try {
-                ctx.getAuthService().login(username, password);
-                Display.success("Welcome, " + ctx.getAuthService().getCurrentUser().getFullName() + "!");
+                AuthService authService = ctx.getAuthService();
+                authService.login(username, password);
+
+                User currentUser = authService.getCurrentUser();
+                String displayName = (currentUser != null && currentUser.getFullName() != null)
+                        ? currentUser.getFullName()
+                        : username;
+
+                Display.success("Welcome, " + displayName + "!");
                 return true;
             } catch (AuthenticationException e) {
+                failedAttempts++;
+                int remaining = MAX_ATTEMPTS - failedAttempts;
                 Display.error(e.getMessage());
+                if (remaining > 0) {
+                    Display.info("  Attempts remaining: " + remaining);
+                }
             }
         }
+
+        Display.error("Maximum login attempts reached. Returning to exit.");
+        return false;
     }
 }
