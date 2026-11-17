@@ -10,19 +10,24 @@ import com.dormrental.model.Lease;
 import com.dormrental.model.Payment;
 import com.dormrental.repository.Repository;
 import com.dormrental.util.Validator;
-
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
 import java.time.format.TextStyle;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 public class PaymentService {
     /** Late fee charged once on each overdue rent bill: 5% of the rent. */
     public static final BigDecimal LATE_FEE_RATE = new BigDecimal("0.05");
+
+    /** A late fee's description is this prefix plus the id of the rent bill it belongs to. */
+    private static final String LATE_FEE_PREFIX = "Late fee for ";
 
     private static final Comparator<Payment> BY_DUE_DATE =
             Comparator.comparing(Payment::getDueDate).thenComparing(Payment::getId);
@@ -48,10 +53,9 @@ public class PaymentService {
     /** Creates {@code months} monthly rent bills starting on {@code firstDue}. Also used when a lease is renewed. */
     public void generateRentPayments(Lease lease, LocalDate firstDue, int months) {
         for (int i = 0; i < months; i++) {
-            LocalDate due = firstDue.plusMonths(i);
-            String label = due.getMonth().getDisplayName(TextStyle.SHORT, Locale.ENGLISH) + " " + due.getYear();
+            LocalDate due = firstDue.plusMonths(i); // counted from firstDue, so a 31st rolls back to the month's last day
             payments.save(new Payment(payments.nextId(), lease.getId(), lease.getTenantId(),
-                    PaymentType.RENT, "Rent for " + label, lease.getMonthlyRate(), due));
+                    PaymentType.RENT, "Rent for " + monthLabel(due), lease.getMonthlyRate(), due));
         }
     }
 
@@ -72,12 +76,12 @@ public class PaymentService {
     // ---- collecting ----------------------------------------------------------------------
 
     public Payment recordPayment(String paymentId, PaymentMethod method, String referenceNo) {
+        if (method == null) {
+            throw new ValidationException("Payment method is required.");
+        }
         Payment payment = getPayment(paymentId);
         if (payment.getStatus() == PaymentStatus.PAID) {
             throw new BusinessRuleException("Payment " + paymentId + " has already been paid.");
-        }
-        if (method == null) {
-            throw new ValidationException("Payment method is required.");
         }
         String ref = referenceNo == null ? "" : referenceNo.trim();
         payment.markPaid(method, LocalDate.now(), ref);
@@ -99,19 +103,24 @@ public class PaymentService {
 
     /** Adds one late-fee bill for every overdue rent bill that has not been charged yet. */
     public int applyLateFees(LocalDate today) {
-        int created = 0;
         List<Payment> overdueRent = payments.findAll(p -> p.getType() == PaymentType.RENT
                 && p.getStatus() == PaymentStatus.OVERDUE);
+
+        // Read the existing penalties once, instead of searching all payments again for every overdue bill.
+        Set<String> charged = payments.findAll(p -> p.getType() == PaymentType.PENALTY).stream()
+                .map(Payment::getDescription)
+                .collect(Collectors.toSet());
+
+        int created = 0;
         for (Payment rent : overdueRent) {
-            String description = "Late fee for " + rent.getId();
-            boolean alreadyCharged = !payments.findAll(p -> p.getType() == PaymentType.PENALTY
-                    && description.equals(p.getDescription())).isEmpty();
-            if (!alreadyCharged) {
-                BigDecimal fee = rent.getAmount().multiply(LATE_FEE_RATE).setScale(2, RoundingMode.HALF_UP);
-                payments.save(new Payment(payments.nextId(), rent.getLeaseId(), rent.getTenantId(),
-                        PaymentType.PENALTY, description, fee, today));
-                created++;
+            String description = LATE_FEE_PREFIX + rent.getId();
+            if (!charged.add(description)) {
+                continue; // already has a late fee
             }
+            BigDecimal fee = rent.getAmount().multiply(LATE_FEE_RATE).setScale(2, RoundingMode.HALF_UP);
+            payments.save(new Payment(payments.nextId(), rent.getLeaseId(), rent.getTenantId(),
+                    PaymentType.PENALTY, description, fee, today));
+            created++;
         }
         return created;
     }
@@ -135,42 +144,43 @@ public class PaymentService {
     }
 
     public List<Payment> listAll() {
-        List<Payment> all = payments.findAll();
-        all.sort(BY_DUE_DATE);
-        return all;
+        return byDueDate(payments.findAll());
     }
 
     public List<Payment> listByLease(String leaseId) {
-        List<Payment> result = payments.findAll(p -> p.getLeaseId().equals(leaseId));
-        result.sort(BY_DUE_DATE);
-        return result;
+        return byDueDate(payments.findAll(p -> p.getLeaseId().equals(leaseId)));
     }
 
     public List<Payment> listByTenant(String tenantId) {
-        List<Payment> result = payments.findAll(p -> p.getTenantId().equals(tenantId));
-        result.sort(BY_DUE_DATE);
-        return result;
+        return byDueDate(payments.findAll(p -> p.getTenantId().equals(tenantId)));
     }
 
     public List<Payment> listUnpaidByTenant(String tenantId) {
-        List<Payment> result = payments.findAll(p -> p.getTenantId().equals(tenantId) && p.isUnpaid());
-        result.sort(BY_DUE_DATE);
-        return result;
+        return byDueDate(payments.findAll(p -> p.getTenantId().equals(tenantId) && p.isUnpaid()));
     }
 
     public List<Payment> listOverdue() {
-        List<Payment> result = payments.findAll(p -> p.getStatus() == PaymentStatus.OVERDUE);
-        result.sort(BY_DUE_DATE);
-        return result;
+        return byDueDate(payments.findAll(p -> p.getStatus() == PaymentStatus.OVERDUE));
     }
 
     /** Sum of unpaid bills that are already due on or before {@code asOf}. */
     public BigDecimal outstandingBalance(String tenantId, LocalDate asOf) {
-        BigDecimal total = BigDecimal.ZERO;
-        for (Payment p : payments.findAll(x -> x.getTenantId().equals(tenantId) && x.isUnpaid()
-                && !x.getDueDate().isAfter(asOf))) {
-            total = total.add(p.getAmount());
-        }
-        return total;
+        return payments.findAll(p -> p.getTenantId().equals(tenantId) && p.isUnpaid()
+                        && !p.getDueDate().isAfter(asOf)).stream()
+                .map(Payment::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    // ---- helpers -------------------------------------------------------------------------
+
+    private static String monthLabel(LocalDate date) {
+        return date.getMonth().getDisplayName(TextStyle.SHORT, Locale.ENGLISH) + " " + date.getYear();
+    }
+
+    /** Sorts a copy, so we never reorder (or fail on) a list the repository may be holding on to. */
+    private static List<Payment> byDueDate(List<Payment> list) {
+        List<Payment> sorted = new ArrayList<>(list);
+        sorted.sort(BY_DUE_DATE);
+        return sorted;
     }
 }
