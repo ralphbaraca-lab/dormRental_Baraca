@@ -2,8 +2,10 @@ package com.dormrental.ui;
 
 import com.dormrental.config.AppContext;
 import com.dormrental.exception.AuthenticationException;
+import com.dormrental.exception.DormRentalException;
 import com.dormrental.model.User;
 import com.dormrental.service.AuthService;
+import com.dormrental.util.Validator;
 
 public class LoginScreen {
     private static final int MAX_ATTEMPTS = 3;
@@ -28,7 +30,7 @@ public class LoginScreen {
 
         while (failedAttempts < MAX_ATTEMPTS) {
             String rawUsername = in.readLine("Username");
-            if (rawUsername == null || rawUsername.trim().isEmpty()) {
+            if (Validator.isBlank(rawUsername)) {
                 Display.info("Exiting login.");
                 return false;
             }
@@ -36,6 +38,9 @@ public class LoginScreen {
             String username = rawUsername.trim();
             String rawPassword = in.readLine("Password");
             String password = rawPassword == null ? "" : rawPassword;
+
+            // Password checking is deliberately slow now (PBKDF2), so tell the user something is happening.
+            Display.info("  Checking credentials...");
 
             try {
                 AuthService authService = ctx.getAuthService();
@@ -55,6 +60,10 @@ public class LoginScreen {
                 if (remaining > 0) {
                     Display.info("  Attempts remaining: " + remaining);
                 }
+            } catch (DormRentalException e) {
+                // Not a wrong password (e.g. hashing unavailable on this JVM), so it doesn't use up an attempt.
+                Display.error("Login is unavailable: " + e.getMessage());
+                return false;
             }
         }
 
