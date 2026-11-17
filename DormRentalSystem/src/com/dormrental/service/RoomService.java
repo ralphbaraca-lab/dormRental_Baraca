@@ -9,7 +9,6 @@ import com.dormrental.exception.ValidationException;
 import com.dormrental.model.Room;
 import com.dormrental.repository.Repository;
 import com.dormrental.util.Validator;
-
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Set;
@@ -25,7 +24,7 @@ public class RoomService {
 
     public Room addRoom(String dormitoryId, String roomNumber, int floor, RoomType type,
                         BigDecimal ratePerBed, Set<Amenity> amenities) {
-        dormitoryService.getDormitory(dormitoryId); // throws if it does not exist
+        // Check the input itself first, before looking anything up.
         String number = Validator.requireNotBlank(roomNumber, "Room number");
         if (floor < 1) {
             throw new ValidationException("Floor must be 1 or higher.");
@@ -34,11 +33,12 @@ public class RoomService {
             throw new ValidationException("Room type is required.");
         }
         Validator.requirePositive(ratePerBed, "Monthly rate");
-        boolean duplicate = !rooms.findAll(r -> r.getDormitoryId().equals(dormitoryId)
-                && r.getRoomNumber().equalsIgnoreCase(number)).isEmpty();
-        if (duplicate) {
+
+        dormitoryService.getDormitory(dormitoryId); // throws if it does not exist
+        if (roomNumberTaken(dormitoryId, number)) {
             throw new DuplicateEntityException("Room " + number + " already exists in this dormitory.");
         }
+
         Room room = new Room(rooms.nextId(), dormitoryId, number, floor, type, ratePerBed);
         if (amenities != null) {
             room.setAmenities(amenities);
@@ -107,7 +107,10 @@ public class RoomService {
         return rooms.save(room);
     }
 
-    /** Used by LeaseService when a lease ends or is terminated. */
+    /**
+     * Used by LeaseService when a lease ends or is terminated. Does nothing if the room no longer
+     * exists or the tenant isn't in it, so closing an old lease can never fail because of the room.
+     */
     public void releaseOccupant(String roomId, String tenantId) {
         rooms.findById(roomId).ifPresent(room -> {
             if (room.removeOccupant(tenantId)) {
@@ -117,18 +120,15 @@ public class RoomService {
     }
 
     public int totalBeds() {
-        int total = 0;
-        for (Room room : rooms.findAll()) {
-            total += room.getCapacity();
-        }
-        return total;
+        return rooms.findAll().stream().mapToInt(Room::getCapacity).sum();
     }
 
     public int occupiedBeds() {
-        int total = 0;
-        for (Room room : rooms.findAll()) {
-            total += room.getOccupancy();
-        }
-        return total;
+        return rooms.findAll().stream().mapToInt(Room::getOccupancy).sum();
+    }
+
+    private boolean roomNumberTaken(String dormitoryId, String roomNumber) {
+        return !rooms.findAll(r -> r.getDormitoryId().equals(dormitoryId)
+                && r.getRoomNumber().equalsIgnoreCase(roomNumber)).isEmpty();
     }
 }
