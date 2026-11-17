@@ -9,7 +9,6 @@ import com.dormrental.model.Lease;
 import com.dormrental.model.Tenant;
 import com.dormrental.repository.Repository;
 import com.dormrental.util.Validator;
-
 import java.util.List;
 import java.util.Locale;
 
@@ -63,6 +62,11 @@ public class TenantService {
 
     public Tenant getTenant(String id) {
         return tenants.findById(id).orElseThrow(() -> new EntityNotFoundException("Tenant", id));
+    }
+
+    /** The tenant's full name, or the id itself if no such tenant exists. For display only. */
+    public String getNameOrId(String id) {
+        return tenants.findById(id).map(Tenant::getFullName).orElse(id);
     }
 
     public List<Tenant> listTenants() {
