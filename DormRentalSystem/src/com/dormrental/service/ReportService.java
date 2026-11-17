@@ -10,11 +10,16 @@ import com.dormrental.model.Tenant;
 import com.dormrental.util.DateUtil;
 import com.dormrental.util.MoneyUtil;
 import com.dormrental.util.TextTable;
-
+import com.dormrental.util.Validator;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.stream.Stream;
 
 /** Builds printable text reports from the other services. Nothing here changes data. */
 public class ReportService {
@@ -42,10 +47,7 @@ public class ReportService {
         int beds = roomService.totalBeds();
         int occupied = roomService.occupiedBeds();
         List<Payment> overdue = paymentService.listOverdue();
-        BigDecimal overdueTotal = BigDecimal.ZERO;
-        for (Payment p : overdue) {
-            overdueTotal = overdueTotal.add(p.getAmount());
-        }
+        BigDecimal overdueTotal = sum(overdue.stream().map(Payment::getAmount));
         return String.format("  Dormitories: %d | Rooms: %d | Beds occupied: %d/%d (%s)%n"
                         + "  Active tenants: %d | Active leases: %d%n"
                         + "  Overdue bills: %d (%s) | Open maintenance requests: %d",
@@ -82,41 +84,38 @@ public class ReportService {
     public String revenueReport(YearMonth month) {
         LocalDate from = month.atDay(1);
         LocalDate to = month.atEndOfMonth();
-        List<Payment> all = paymentService.listAll();
-        TextTable table = new TextTable("Type", "Billed", "Collected");
-        BigDecimal totalBilled = BigDecimal.ZERO;
-        BigDecimal totalCollected = BigDecimal.ZERO;
-        for (PaymentType type : PaymentType.values()) {
-            BigDecimal billed = BigDecimal.ZERO;
-            BigDecimal collected = BigDecimal.ZERO;
-            for (Payment p : all) {
-                if (p.getType() != type) {
-                    continue;
-                }
-                if (!p.getDueDate().isBefore(from) && !p.getDueDate().isAfter(to)) {
-                    billed = billed.add(p.getAmount());
-                }
-                if (p.getStatus() == PaymentStatus.PAID && p.getPaidDate() != null
-                        && !p.getPaidDate().isBefore(from) && !p.getPaidDate().isAfter(to)) {
-                    collected = collected.add(p.getAmount());
-                }
+
+        // One pass over the payments, adding each one to its type's totals.
+        Map<PaymentType, BigDecimal> billed = zeroPerType();
+        Map<PaymentType, BigDecimal> collected = zeroPerType();
+        for (Payment p : paymentService.listAll()) {
+            if (isWithin(p.getDueDate(), from, to)) {
+                billed.merge(p.getType(), p.getAmount(), BigDecimal::add);
             }
-            table.addRow(type, MoneyUtil.format(billed), MoneyUtil.format(collected));
-            totalBilled = totalBilled.add(billed);
-            totalCollected = totalCollected.add(collected);
+            if (p.getStatus() == PaymentStatus.PAID && p.getPaidDate() != null && isWithin(p.getPaidDate(), from, to)) {
+                collected.merge(p.getType(), p.getAmount(), BigDecimal::add);
+            }
         }
-        table.addRow("TOTAL", MoneyUtil.format(totalBilled), MoneyUtil.format(totalCollected));
+
+        TextTable table = new TextTable("Type", "Billed", "Collected");
+        for (PaymentType type : PaymentType.values()) {
+            table.addRow(type, MoneyUtil.format(billed.get(type)), MoneyUtil.format(collected.get(type)));
+        }
+        table.addRow("TOTAL", MoneyUtil.format(sum(billed.values().stream())),
+                MoneyUtil.format(sum(collected.values().stream())));
         return "REVENUE REPORT FOR " + month + NL + table.render();
     }
 
     public String overdueReport(LocalDate today) {
         TextTable table = new TextTable("Payment", "Tenant", "Type", "Description", "Due", "Days late", "Amount");
-        BigDecimal total = BigDecimal.ZERO;
-        for (Payment p : paymentService.listOverdue()) {
-            table.addRow(p.getId(), tenantName(p.getTenantId()), p.getType(), p.getDescription(),
-                    DateUtil.format(p.getDueDate()), p.daysOverdue(today), MoneyUtil.format(p.getAmount()));
-            total = total.add(p.getAmount());
+        Map<String, String> tenantNames = new HashMap<>(); // each tenant is looked up once, however many bills they have
+        List<Payment> overdue = paymentService.listOverdue();
+        for (Payment p : overdue) {
+            table.addRow(p.getId(), tenantNames.computeIfAbsent(p.getTenantId(), this::tenantName), p.getType(),
+                    p.getDescription(), DateUtil.format(p.getDueDate()), p.daysOverdue(today),
+                    MoneyUtil.format(p.getAmount()));
         }
+        BigDecimal total = sum(overdue.stream().map(Payment::getAmount));
         return "OVERDUE PAYMENTS" + NL + table.render() + NL + "  Total overdue: " + MoneyUtil.format(total) + NL;
     }
 
@@ -140,29 +139,48 @@ public class ReportService {
         String bar = "  ----------------------------------------";
         StringBuilder sb = new StringBuilder();
         sb.append("  OFFICIAL RECEIPT").append(NL).append(bar).append(NL);
-        sb.append(String.format("  Receipt for : %s%n", p.getId()));
-        sb.append(String.format("  Tenant      : %s%n", tenantName(p.getTenantId())));
-        sb.append(String.format("  Lease       : %s%n", p.getLeaseId()));
-        sb.append(String.format("  Item        : %s (%s)%n", p.getDescription(), p.getType()));
-        sb.append(String.format("  Amount paid : %s%n", MoneyUtil.format(p.getAmount())));
-        sb.append(String.format("  Paid on     : %s%n", DateUtil.format(p.getPaidDate())));
-        sb.append(String.format("  Method      : %s%n", p.getMethod()));
-        if (p.getReferenceNo() != null && !p.getReferenceNo().isEmpty()) {
-            sb.append(String.format("  Reference   : %s%n", p.getReferenceNo()));
+        appendLine(sb, "Receipt for", p.getId());
+        appendLine(sb, "Tenant", tenantName(p.getTenantId()));
+        appendLine(sb, "Lease", p.getLeaseId());
+        appendLine(sb, "Item", p.getDescription() + " (" + p.getType() + ")");
+        appendLine(sb, "Amount paid", MoneyUtil.format(p.getAmount()));
+        appendLine(sb, "Paid on", DateUtil.format(p.getPaidDate()));
+        appendLine(sb, "Method", p.getMethod());
+        if (!Validator.isBlank(p.getReferenceNo())) {
+            appendLine(sb, "Reference", p.getReferenceNo());
         }
         sb.append(bar).append(NL);
         return sb.toString();
     }
 
+    // ---- helpers -------------------------------------------------------------------------
+
+    private static void appendLine(StringBuilder sb, String label, Object value) {
+        sb.append(String.format("  %-12s: %s%n", label, value));
+    }
+
     private String tenantName(String tenantId) {
-        try {
-            return tenantService.getTenant(tenantId).getFullName();
-        } catch (RuntimeException e) {
-            return tenantId;
+        return tenantService.getNameOrId(tenantId);
+    }
+
+    private static Map<PaymentType, BigDecimal> zeroPerType() {
+        Map<PaymentType, BigDecimal> map = new EnumMap<>(PaymentType.class);
+        for (PaymentType type : PaymentType.values()) {
+            map.put(type, BigDecimal.ZERO);
         }
+        return map;
+    }
+
+    private static boolean isWithin(LocalDate date, LocalDate from, LocalDate to) {
+        return !date.isBefore(from) && !date.isAfter(to);
+    }
+
+    private static BigDecimal sum(Stream<BigDecimal> amounts) {
+        return amounts.reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private static String percent(int part, int whole) {
-        return whole == 0 ? "0.0%" : String.format("%.1f%%", part * 100.0 / whole);
+        // Locale.US so the decimal point doesn't turn into a comma on a computer set to another region.
+        return whole == 0 ? "0.0%" : String.format(Locale.US, "%.1f%%", part * 100.0 / whole);
     }
 }
