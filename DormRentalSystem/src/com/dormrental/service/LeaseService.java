@@ -10,10 +10,10 @@ import com.dormrental.model.Room;
 import com.dormrental.model.Tenant;
 import com.dormrental.repository.Repository;
 import com.dormrental.util.Validator;
-
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 public class LeaseService {
@@ -36,6 +36,17 @@ public class LeaseService {
 
     /** Moves a tenant into a room, signs the lease and generates the billing schedule. */
     public Lease createLease(String tenantId, String roomId, LocalDate startDate, int months, BigDecimal securityDeposit) {
+        // Check the input itself first, before looking anything up.
+        if (startDate == null) {
+            throw new ValidationException("Start date is required.");
+        }
+        requireValidMonths(months);
+        Validator.requireNonNegative(securityDeposit, "Security deposit");
+        LocalDate endDate = startDate.plusMonths(months).minusDays(1);
+        if (endDate.isBefore(LocalDate.now())) {
+            throw new ValidationException("That lease would already be over (it ends " + endDate + ").");
+        }
+
         Tenant tenant = tenantService.getTenant(tenantId);
         if (!tenant.isActive()) {
             throw new BusinessRuleException(tenant.getFullName() + " is deactivated. Reactivate the tenant first.");
@@ -46,27 +57,38 @@ public class LeaseService {
         Room room = roomService.getRoom(roomId);
         Dormitory dormitory = dormitoryService.getDormitory(room.getDormitoryId());
         if (!dormitory.getType().accepts(tenant.getGender())) {
-            throw new BusinessRuleException(dormitory.getName() + " is " + dormitory.getType().getLabel().toLowerCase()
-                    + " and cannot house this tenant.");
-        }
-        if (startDate == null) {
-            throw new ValidationException("Start date is required.");
-        }
-        requireValidMonths(months);
-        if (securityDeposit == null || securityDeposit.signum() < 0) {
-            throw new ValidationException("Security deposit cannot be negative.");
-        }
-        LocalDate endDate = startDate.plusMonths(months).minusDays(1);
-        if (endDate.isBefore(LocalDate.now())) {
-            throw new ValidationException("That lease would already be over (it ends " + endDate + ").");
+            throw new BusinessRuleException(dormitory.getName() + " is "
+                    + dormitory.getType().getLabel().toLowerCase(Locale.ROOT) + " and cannot house this tenant.");
         }
 
         roomService.assignOccupant(roomId, tenantId); // checks vacancy and maintenance mode
         Lease lease = new Lease(leases.nextId(), tenantId, roomId, startDate, endDate,
                 room.getMonthlyRate(), securityDeposit);
-        leases.save(lease);
-        paymentService.generateSchedule(lease);
+        try {
+            leases.save(lease);
+            paymentService.generateSchedule(lease);
+        } catch (RuntimeException e) {
+            rollbackNewLease(lease, e);
+            throw e;
+        }
         return lease;
+    }
+
+    /**
+     * Undoes createLease after a failure so the tenant isn't left occupying a bed with no lease.
+     * Best effort: a problem here is attached to the original exception rather than hiding it.
+     */
+    private void rollbackNewLease(Lease lease, RuntimeException original) {
+        try {
+            leases.deleteById(lease.getId());
+        } catch (RuntimeException e) {
+            original.addSuppressed(e);
+        }
+        try {
+            roomService.releaseOccupant(lease.getRoomId(), lease.getTenantId());
+        } catch (RuntimeException e) {
+            original.addSuppressed(e);
+        }
     }
 
     /** Extends an active lease and bills the extra months. */
@@ -87,6 +109,10 @@ public class LeaseService {
         requireActive(lease);
         String cleanReason = Validator.requireNotBlank(reason, "Reason");
         LocalDate effective = effectiveDate == null ? LocalDate.now() : effectiveDate;
+        if (effective.isBefore(lease.getStartDate())) {
+            throw new ValidationException("The effective date cannot be before the lease starts ("
+                    + lease.getStartDate() + ").");
+        }
         lease.terminate(effective, cleanReason);
         leases.save(lease);
         roomService.releaseOccupant(lease.getRoomId(), lease.getTenantId());
@@ -98,22 +124,17 @@ public class LeaseService {
     public Lease endLease(String leaseId) {
         Lease lease = getLease(leaseId);
         requireActive(lease);
-        lease.end();
-        leases.save(lease);
-        roomService.releaseOccupant(lease.getRoomId(), lease.getTenantId());
+        completeLease(lease);
         return lease;
     }
 
     /** Automatically ends every active lease whose last day has passed. Returns how many were closed. */
     public int closeExpiredLeases(LocalDate today) {
-        int closed = 0;
-        for (Lease lease : leases.findAll(l -> l.isActive() && l.getEndDate().isBefore(today))) {
-            lease.end();
-            leases.save(lease);
-            roomService.releaseOccupant(lease.getRoomId(), lease.getTenantId());
-            closed++;
+        List<Lease> expired = leases.findAll(l -> l.isActive() && l.getEndDate().isBefore(today));
+        for (Lease lease : expired) {
+            completeLease(lease);
         }
-        return closed;
+        return expired.size();
     }
 
     public Lease getLease(String id) {
@@ -139,6 +160,13 @@ public class LeaseService {
     public List<Lease> findExpiringWithin(int days, LocalDate today) {
         LocalDate limit = today.plusDays(days);
         return leases.findAll(l -> l.isActive() && !l.getEndDate().isBefore(today) && !l.getEndDate().isAfter(limit));
+    }
+
+    /** Shared by endLease and closeExpiredLeases: mark the lease ended, save it, free the bed. */
+    private void completeLease(Lease lease) {
+        lease.end();
+        leases.save(lease);
+        roomService.releaseOccupant(lease.getRoomId(), lease.getTenantId());
     }
 
     private void requireActive(Lease lease) {
