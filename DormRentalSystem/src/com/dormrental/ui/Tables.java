@@ -13,115 +13,168 @@ import com.dormrental.model.VisitorLog;
 import com.dormrental.util.DateUtil;
 import com.dormrental.util.MoneyUtil;
 import com.dormrental.util.TextTable;
-
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
 
 /** Turns lists of model objects into printable tables, looking up names for ids where useful. */
 public class Tables {
+    private static final String YES = "yes";
+    private static final String NO = "no";
+    private static final String STAFF = "Staff";
+    private static final String STILL_INSIDE = "(inside)";
+
     private final AppContext ctx;
 
     public Tables(AppContext ctx) {
-        this.ctx = ctx;
+        this.ctx = Objects.requireNonNull(ctx, "ctx");
     }
 
+    // ---------------------------------------------------------------- tables
+
     public String dormitories(List<Dormitory> list) {
-        TextTable table = new TextTable("ID", "Name", "Type", "Address", "Contact", "Rooms");
-        for (Dormitory d : list) {
-            table.addRow(d.getId(), d.getName(), d.getType(), d.getAddress(), d.getContactNumber(),
-                    ctx.getRoomService().listByDormitory(d.getId()).size());
-        }
-        return table.render();
+        return render(list,
+                new String[] {"ID", "Name", "Type", "Address", "Contact", "Rooms"},
+                d -> new Object[] {
+                        d.getId(), d.getName(), d.getType(), d.getAddress(), d.getContactNumber(),
+                        ctx.getRoomService().listByDormitory(d.getId()).size()
+                });
     }
 
     public String rooms(List<Room> list) {
-        TextTable table = new TextTable("ID", "Dormitory", "Room", "Floor", "Type", "Rate/bed", "Beds", "Status");
-        for (Room r : list) {
-            table.addRow(r.getId(), dormitoryName(r.getDormitoryId()), r.getRoomNumber(), r.getFloor(),
-                    r.getType().getLabel(), MoneyUtil.format(r.getMonthlyRate()),
-                    r.getOccupancy() + "/" + r.getCapacity(), r.getStatus());
-        }
-        return table.render();
+        Function<String, String> dormName = memoize(this::dormitoryName);
+        return render(list,
+                new String[] {"ID", "Dormitory", "Room", "Floor", "Type", "Rate/bed", "Beds", "Status"},
+                r -> new Object[] {
+                        r.getId(), dormName.apply(r.getDormitoryId()), r.getRoomNumber(), r.getFloor(),
+                        r.getType().getLabel(), MoneyUtil.format(r.getMonthlyRate()),
+                        r.getOccupancy() + "/" + r.getCapacity(), r.getStatus()
+                });
     }
 
     public String tenants(List<Tenant> list) {
-        TextTable table = new TextTable("ID", "Name", "Gender", "Email", "Phone", "School", "Active");
-        for (Tenant t : list) {
-            table.addRow(t.getId(), t.getFullName(), t.getGender(), t.getEmail(), t.getPhone(),
-                    t.getSchool(), t.isActive() ? "yes" : "no");
-        }
-        return table.render();
+        return render(list,
+                new String[] {"ID", "Name", "Gender", "Email", "Phone", "School", "Active"},
+                t -> new Object[] {
+                        t.getId(), t.getFullName(), t.getGender(), t.getEmail(), t.getPhone(),
+                        t.getSchool(), t.isActive() ? YES : NO
+                });
     }
 
     public String leases(List<Lease> list) {
-        TextTable table = new TextTable("ID", "Tenant", "Room", "Start", "End", "Rate/month", "Deposit", "Status");
-        for (Lease l : list) {
-            table.addRow(l.getId(), tenantName(l.getTenantId()), roomLabel(l.getRoomId()),
-                    DateUtil.format(l.getStartDate()), DateUtil.format(l.getEndDate()),
-                    MoneyUtil.format(l.getMonthlyRate()), MoneyUtil.format(l.getSecurityDeposit()), l.getStatus());
-        }
-        return table.render();
+        Function<String, String> tenant = memoize(this::tenantName);
+        Function<String, String> room = roomLabels();
+        return render(list,
+                new String[] {"ID", "Tenant", "Room", "Start", "End", "Rate/month", "Deposit", "Status"},
+                l -> new Object[] {
+                        l.getId(), tenant.apply(l.getTenantId()), room.apply(l.getRoomId()),
+                        DateUtil.format(l.getStartDate()), DateUtil.format(l.getEndDate()),
+                        MoneyUtil.format(l.getMonthlyRate()), MoneyUtil.format(l.getSecurityDeposit()),
+                        l.getStatus()
+                });
     }
 
     public String payments(List<Payment> list) {
-        TextTable table = new TextTable("ID", "Tenant", "Type", "Description", "Due", "Amount", "Status", "Paid on", "Method");
-        for (Payment p : list) {
-            table.addRow(p.getId(), tenantName(p.getTenantId()), p.getType(), p.getDescription(),
-                    DateUtil.format(p.getDueDate()), MoneyUtil.format(p.getAmount()), p.getStatus(),
-                    DateUtil.format(p.getPaidDate()), p.getMethod());
-        }
-        return table.render();
+        Function<String, String> tenant = memoize(this::tenantName);
+        return render(list,
+                new String[] {"ID", "Tenant", "Type", "Description", "Due", "Amount", "Status", "Paid on", "Method"},
+                p -> new Object[] {
+                        p.getId(), tenant.apply(p.getTenantId()), p.getType(), p.getDescription(),
+                        DateUtil.format(p.getDueDate()), MoneyUtil.format(p.getAmount()), p.getStatus(),
+                        DateUtil.format(p.getPaidDate()), p.getMethod()
+                });
     }
 
     public String requests(List<MaintenanceRequest> list) {
-        TextTable table = new TextTable("ID", "Room", "Title", "Priority", "Status", "Reported", "Assigned to", "Reported by");
-        for (MaintenanceRequest m : list) {
-            table.addRow(m.getId(), roomLabel(m.getRoomId()), m.getTitle(), m.getPriority(), m.getStatus(),
-                    DateUtil.format(m.getReportedOn()), m.getAssignedTo(),
-                    m.getTenantId() == null ? "Staff" : tenantName(m.getTenantId()));
-        }
-        return table.render();
+        Function<String, String> tenant = memoize(this::tenantName);
+        Function<String, String> room = roomLabels();
+        return render(list,
+                new String[] {"ID", "Room", "Title", "Priority", "Status", "Reported", "Assigned to", "Reported by"},
+                m -> new Object[] {
+                        m.getId(), room.apply(m.getRoomId()), m.getTitle(), m.getPriority(), m.getStatus(),
+                        DateUtil.format(m.getReportedOn()), m.getAssignedTo(),
+                        m.getTenantId() == null ? STAFF : tenant.apply(m.getTenantId())
+                });
     }
 
     public String visitors(List<VisitorLog> list) {
-        TextTable table = new TextTable("ID", "Visitor", "Visiting", "Purpose", "Time in", "Time out");
-        for (VisitorLog v : list) {
-            table.addRow(v.getId(), v.getVisitorName(), tenantName(v.getTenantId()), v.getPurpose(),
-                    DateUtil.format(v.getTimeIn()), v.isInside() ? "(inside)" : DateUtil.format(v.getTimeOut()));
-        }
-        return table.render();
+        Function<String, String> tenant = memoize(this::tenantName);
+        return render(list,
+                new String[] {"ID", "Visitor", "Visiting", "Purpose", "Time in", "Time out"},
+                v -> new Object[] {
+                        v.getId(), v.getVisitorName(), tenant.apply(v.getTenantId()), v.getPurpose(),
+                        DateUtil.format(v.getTimeIn()),
+                        v.isInside() ? STILL_INSIDE : DateUtil.format(v.getTimeOut())
+                });
     }
 
     public String users(List<User> list) {
-        TextTable table = new TextTable("ID", "Username", "Full name", "Role");
-        for (User u : list) {
-            table.addRow(u.getId(), u.getUsername(), u.getFullName(), u.getRole());
-        }
-        return table.render();
+        return render(list,
+                new String[] {"ID", "Username", "Full name", "Role"},
+                u -> new Object[] {u.getId(), u.getUsername(), u.getFullName(), u.getRole()});
     }
 
+    // ---------------------------------------------------------- id -> label
+
     public String dormitoryName(String dormitoryId) {
-        try {
-            return ctx.getDormitoryService().getDormitory(dormitoryId).getName();
-        } catch (EntityNotFoundException e) {
-            return dormitoryId;
-        }
+        return nameOrId(dormitoryId, () -> ctx.getDormitoryService().getDormitory(dormitoryId).getName());
     }
 
     public String tenantName(String tenantId) {
-        try {
-            return ctx.getTenantService().getTenant(tenantId).getFullName();
-        } catch (EntityNotFoundException e) {
-            return tenantId;
-        }
+        return nameOrId(tenantId, () -> ctx.getTenantService().getTenant(tenantId).getFullName());
     }
 
     /** "Sunrise Hall 101" for a room id. */
     public String roomLabel(String roomId) {
+        return roomLabel(roomId, this::dormitoryName);
+    }
+
+    // --------------------------------------------------------------- helpers
+
+    /** A lookup that can fail with {@link EntityNotFoundException}. */
+    @FunctionalInterface
+    private interface Lookup {
+        String get() throws EntityNotFoundException;
+    }
+
+    /** Returns the looked-up name, or the raw id if the entity no longer exists. */
+    private static String nameOrId(String id, Lookup lookup) {
         try {
-            Room room = ctx.getRoomService().getRoom(roomId);
-            return dormitoryName(room.getDormitoryId()) + " " + room.getRoomNumber();
+            return lookup.get();
         } catch (EntityNotFoundException e) {
-            return roomId;
+            return id;
         }
+    }
+
+    private String roomLabel(String roomId, Function<String, String> dormName) {
+        return nameOrId(roomId, () -> {
+            Room room = ctx.getRoomService().getRoom(roomId);
+            return dormName.apply(room.getDormitoryId()) + " " + room.getRoomNumber();
+        });
+    }
+
+    /** Room-label lookup that remembers dormitory and room names for the duration of one render. */
+    private Function<String, String> roomLabels() {
+        Function<String, String> dormName = memoize(this::dormitoryName);
+        return memoize(roomId -> roomLabel(roomId, dormName));
+    }
+
+    /**
+     * Caches results for one table render, so a tenant or room that appears in many rows
+     * is only looked up once. Deliberately not shared between renders, so data is never stale.
+     */
+    private static Function<String, String> memoize(Function<String, String> lookup) {
+        Map<String, String> cache = new HashMap<>();
+        return id -> cache.computeIfAbsent(id, lookup);
+    }
+
+    private static <T> String render(List<T> items, String[] headers, Function<T, Object[]> toRow) {
+        TextTable table = new TextTable(headers);
+        for (T item : items) {
+            table.addRow(toRow.apply(item));
+        }
+        return table.render();
     }
 }
