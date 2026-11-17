@@ -123,7 +123,7 @@ public class Tables {
     }
 
     public String tenantName(String tenantId) {
-        return nameOrId(tenantId, () -> ctx.getTenantService().getTenant(tenantId).getFullName());
+        return ctx.getTenantService().getNameOrId(tenantId);
     }
 
     /** "Sunrise Hall 101" for a room id. */
