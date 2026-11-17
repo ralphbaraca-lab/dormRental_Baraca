@@ -9,7 +9,6 @@ import com.dormrental.model.User;
 import com.dormrental.repository.Repository;
 import com.dormrental.util.PasswordUtil;
 import com.dormrental.util.Validator;
-
 import java.util.List;
 import java.util.Optional;
 
@@ -34,13 +33,28 @@ public class AuthService {
     }
 
     public User login(String username, String password) {
-        String name = username == null ? "" : username.trim();
-        Optional<User> found = users.findAll(u -> u.getUsername().equalsIgnoreCase(name)).stream().findFirst();
-        if (!found.isPresent() || !PasswordUtil.verify(password == null ? "" : password, found.get().getPasswordHash())) {
+        Optional<User> found = findByUsername(username);
+
+        // Always run a password check, even for an unknown username. Checking is deliberately slow,
+        // so skipping it would let someone tell real usernames from fake ones by how fast the error comes back.
+        String storedHash = found.isPresent() ? found.get().getPasswordHash() : DummyHash.VALUE;
+        boolean passwordOk = PasswordUtil.verify(password, storedHash);
+        if (!found.isPresent() || !passwordOk) {
             throw new AuthenticationException("Invalid username or password.");
         }
-        currentUser = found.get();
+
+        User user = found.get();
+        upgradeHashIfNeeded(user, password);
+        currentUser = user;
         return currentUser;
+    }
+
+    /** Moves accounts with an old-format or weaker hash to the current one, now that we have the plain password. */
+    private void upgradeHashIfNeeded(User user, String password) {
+        if (PasswordUtil.needsRehash(user.getPasswordHash())) {
+            user.setPasswordHash(PasswordUtil.hash(password));
+            users.save(user);
+        }
     }
 
     public void logout() {
@@ -66,7 +80,7 @@ public class AuthService {
         String name = Validator.requireNotBlank(username, "Username");
         String full = Validator.requireNotBlank(fullName, "Full name");
         requireValidPassword(password);
-        if (!users.findAll(u -> u.getUsername().equalsIgnoreCase(name)).isEmpty()) {
+        if (findByUsername(name).isPresent()) {
             throw new DuplicateEntityException("Username '" + name + "' is already taken.");
         }
         return users.save(new User(users.nextId(), name, PasswordUtil.hash(password), full, role));
@@ -76,7 +90,7 @@ public class AuthService {
         if (currentUser == null) {
             throw new AuthenticationException("Not logged in.");
         }
-        if (!PasswordUtil.verify(oldPassword == null ? "" : oldPassword, currentUser.getPasswordHash())) {
+        if (!PasswordUtil.verify(oldPassword, currentUser.getPasswordHash())) {
             throw new AuthenticationException("Current password is incorrect.");
         }
         requireValidPassword(newPassword);
@@ -88,9 +102,19 @@ public class AuthService {
         return users.findAll();
     }
 
+    private Optional<User> findByUsername(String username) {
+        String name = username == null ? "" : username.trim();
+        return users.findAll(u -> u.getUsername().equalsIgnoreCase(name)).stream().findFirst();
+    }
+
     private void requireValidPassword(String password) {
         if (password == null || password.length() < MIN_PASSWORD_LENGTH) {
             throw new ValidationException("Password must be at least " + MIN_PASSWORD_LENGTH + " characters.");
         }
+    }
+
+    /** A throwaway hash for timing-equal checks on unknown usernames; built on first use, not at startup. */
+    private static final class DummyHash {
+        static final String VALUE = PasswordUtil.hash("not-a-real-password");
     }
 }
