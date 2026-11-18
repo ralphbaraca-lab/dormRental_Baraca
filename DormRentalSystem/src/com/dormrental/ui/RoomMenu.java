@@ -6,7 +6,6 @@ import com.dormrental.enums.RoomType;
 import com.dormrental.model.Room;
 import com.dormrental.service.RoomService;
 import com.dormrental.util.MoneyUtil;
-
 import java.math.BigDecimal;
 import java.util.Set;
 
@@ -84,7 +83,7 @@ public class RoomMenu extends Menu {
     private void listByDormitory() {
         Display.print(tables.dormitories(ctx.getDormitoryService().listDormitories()));
         String dormitoryId = in.readId("Dormitory ID");
-        ctx.getDormitoryService().getDormitory(dormitoryId);
+        ctx.getDormitoryService().getDormitory(dormitoryId); // throws if it doesn't exist, rather than showing an empty list
         Display.print(tables.rooms(service.listByDormitory(dormitoryId)));
     }
 
@@ -97,15 +96,14 @@ public class RoomMenu extends Menu {
     }
 
     private void details() {
-        String id = in.readId("Room ID");
-        Room room = service.getRoom(id);
+        Room room = readRoom("Room ID");
         Display.subheader("Room " + room.getRoomNumber() + " - " + tables.dormitoryName(room.getDormitoryId()));
-        Display.info("  ID         : " + room.getId());
-        Display.info("  Floor      : " + room.getFloor());
-        Display.info("  Type       : " + room.getType());
-        Display.info("  Rate / bed : " + MoneyUtil.format(room.getMonthlyRate()));
-        Display.info("  Status     : " + room.getStatus() + " (" + room.getOccupancy() + "/" + room.getCapacity() + " beds taken)");
-        Display.info("  Amenities  : " + (room.getAmenities().isEmpty() ? "none" : room.getAmenities().toString()));
+        field("ID", room.getId());
+        field("Floor", room.getFloor());
+        field("Type", room.getType());
+        field("Rate / bed", MoneyUtil.format(room.getMonthlyRate()));
+        field("Status", room.getStatus() + " (" + room.getOccupancy() + "/" + room.getCapacity() + " beds taken)");
+        field("Amenities", room.getAmenities().isEmpty() ? "none" : room.getAmenities().toString());
         Display.info("  Occupants  :");
         if (room.getOccupantIds().isEmpty()) {
             Display.info("    (none)");
@@ -117,23 +115,27 @@ public class RoomMenu extends Menu {
 
     private void update() {
         Display.print(tables.rooms(service.listRooms()));
-        String id = in.readId("Room ID to update");
-        service.getRoom(id);
+        // Looking the room up now means a wrong id is reported before any of the questions below.
+        String id = readRoom("Room ID to update").getId();
         Display.info("Leave a field blank to keep its current value. Existing leases keep their signed rate.");
-        BigDecimal rate = in.readOptionalMoney("New monthly rate per bed (PHP)");
+
+        BigDecimal rate = readOptionalRate("New monthly rate per bed (PHP)");
         Set<Amenity> amenities = in.confirm("Replace the amenity list?") ? in.readEnumSet("Amenities", Amenity.class) : null;
+        if (rate == null && amenities == null) {
+            Display.info("Nothing to change.");
+            return;
+        }
         service.updateRoom(id, rate, amenities);
         Display.success("Room " + id + " updated.");
     }
 
     private void toggleMaintenance() {
-        String id = in.readId("Room ID");
-        Room room = service.getRoom(id);
+        Room room = readRoom("Room ID");
         boolean target = !room.isUnderMaintenance();
         String question = target ? "Put room " + room.getRoomNumber() + " under maintenance (no new tenants)?"
                 : "Return room " + room.getRoomNumber() + " to service?";
         if (in.confirm(question)) {
-            service.setUnderMaintenance(id, target);
+            service.setUnderMaintenance(room.getId(), target);
             Display.success("Room " + room.getRoomNumber() + " is now " + (target ? "under maintenance." : "available again."));
         } else {
             Display.info("Cancelled.");
@@ -141,13 +143,40 @@ public class RoomMenu extends Menu {
     }
 
     private void delete() {
-        String id = in.readId("Room ID to delete");
-        Room room = service.getRoom(id);
+        Room room = readRoom("Room ID to delete");
+        // RoomService enforces this too; checking here just avoids asking for a confirmation that can only fail.
+        if (room.getOccupancy() > 0) {
+            Display.error("Room " + room.getRoomNumber() + " still has tenants living in it.");
+            return;
+        }
         if (in.confirm("Delete room " + room.getRoomNumber() + " of " + tables.dormitoryName(room.getDormitoryId()) + "?")) {
-            service.deleteRoom(id);
+            service.deleteRoom(room.getId());
             Display.success("Room deleted.");
         } else {
             Display.info("Cancelled.");
         }
+    }
+
+    // ---- helpers -------------------------------------------------------------------------
+
+    /** Asks for a room id and returns that room (throws if there is no such room). */
+    private Room readRoom(String prompt) {
+        return service.getRoom(in.readId(prompt));
+    }
+
+    /** A new rate, or null if left blank. Zero is refused here, instead of after the other questions have been answered. */
+    private BigDecimal readOptionalRate(String prompt) {
+        while (true) {
+            BigDecimal rate = in.readOptionalMoney(prompt);
+            if (rate == null || rate.signum() > 0) {
+                return rate;
+            }
+            Display.error("The rate must be greater than zero, or leave it blank to keep the current one.");
+        }
+    }
+
+    /** One aligned "  Label      : value" line in the details view. */
+    private static void field(String label, Object value) {
+        Display.info(String.format("  %-11s: %s", label, value));
     }
 }
