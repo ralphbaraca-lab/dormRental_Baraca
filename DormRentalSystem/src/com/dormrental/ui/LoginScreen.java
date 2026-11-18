@@ -1,3 +1,4 @@
+
 package com.dormrental.ui;
 
 import com.dormrental.config.AppContext;
@@ -6,67 +7,126 @@ import com.dormrental.exception.DormRentalException;
 import com.dormrental.model.User;
 import com.dormrental.service.AuthService;
 import com.dormrental.util.Validator;
+import java.util.Objects;
 
+/**
+ * Handles user login and authentication through the console.
+ */
 public class LoginScreen {
+
     private static final int MAX_ATTEMPTS = 3;
 
     private final InputHelper in;
     private final AppContext ctx;
 
+    // Constructor
     public LoginScreen(InputHelper in, AppContext ctx) {
-        this.in = in;
-        this.ctx = ctx;
+        this.in = Objects.requireNonNull(in, "InputHelper cannot be null.");
+        this.ctx = Objects.requireNonNull(ctx, "AppContext cannot be null.");
     }
 
-    /** Returns true once authenticated, or false if the user exits or exceeds max attempts. */
+    /**
+     * Starts the login process.
+     *
+     * @return true if authentication succeeds;
+     *         false if the user exits or exceeds login attempts.
+     */
     public boolean run() {
+
         Display.header("DORM RENTAL SYSTEM - LOGIN");
-        Display.info("  First run: sign in as '" + AuthService.DEFAULT_ADMIN_USERNAME
-                + "' / '" + AuthService.DEFAULT_ADMIN_PASSWORD
-                + "', then change the password under Administration.");
-        Display.info("  Leave Username blank to exit. Max attempts: " + MAX_ATTEMPTS + ".");
+
+        Display.info("  Please enter your administrator or registered account credentials.");
+        Display.info("  Leave Username blank to exit.");
+        Display.info("  Maximum login attempts: " + MAX_ATTEMPTS + ".");
 
         AuthService authService = ctx.getAuthService();
+
         int failedAttempts = 0;
 
         while (failedAttempts < MAX_ATTEMPTS) {
+
+            // Read username
             String rawUsername = in.readLine("Username");
+
             if (Validator.isBlank(rawUsername)) {
-                Display.info("Exiting login.");
+                Display.info("Login cancelled. Exiting login.");
                 return false;
             }
+
             String username = rawUsername.trim();
 
-            String password = in.readPassword("Password"); // hidden while typing when a real terminal is available
-
-            // Password checking is deliberately slow now (PBKDF2), so tell the user something is happening.
-            Display.info("  Checking credentials...");
+            // Read password
+            String password = in.readPassword("Password");
 
             try {
+
+                Display.info("Checking credentials...");
+
+                // Authenticate user
                 User user = authService.login(username, password);
-                Display.success("Welcome, " + displayName(user, username) + "!");
+
+                // Successful authentication
+                Display.success(
+                    "Welcome, " + displayName(user, username) + "!"
+                );
+
                 return true;
+
             } catch (AuthenticationException e) {
+
+                // Invalid credentials
                 failedAttempts++;
-                Display.error(e.getMessage());
-                int remaining = MAX_ATTEMPTS - failedAttempts;
-                if (remaining > 0) {
-                    Display.info("  Attempts remaining: " + remaining);
+
+                Display.error("Invalid username or password.");
+
+                int remainingAttempts = MAX_ATTEMPTS - failedAttempts;
+
+                if (remainingAttempts > 0) {
+                    Display.info(
+                        "Attempts remaining: " + remainingAttempts
+                    );
                 }
+
             } catch (DormRentalException e) {
-                // Not a wrong password (e.g. hashing unavailable on this JVM), so it doesn't use up an attempt.
-                Display.error("Login is unavailable: " + e.getMessage());
+
+                // Authentication service or application error
+                Display.error(
+                    "Login service is currently unavailable. " +
+                    "Please contact the administrator."
+                );
+
                 return false;
+
+            } finally {
+
+                // Release the password reference after authentication.
+                // Java Strings cannot be securely erased from memory.
+                password = null;
             }
         }
 
-        Display.error("Maximum login attempts reached. Returning to exit.");
+        // Maximum attempts reached
+        Display.error(
+            "Maximum login attempts reached. Returning to exit."
+        );
+
         return false;
     }
 
-    /** The user's full name, or the username they typed if the account has no name. */
+    /**
+     * Returns the user's full name.
+     * Uses the username if the full name is unavailable.
+     */
     private static String displayName(User user, String fallback) {
-        String fullName = user == null ? null : user.getFullName();
-        return Validator.isBlank(fullName) ? fallback : fullName;
+
+        if (user == null) {
+            return fallback;
+        }
+
+        String fullName = user.getFullName();
+
+        return Validator.isBlank(fullName)
+                ? fallback
+                : fullName.trim();
     }
 }
