@@ -3,6 +3,7 @@ package com.dormrental.ui;
 import com.dormrental.config.AppContext;
 import com.dormrental.config.DataSeeder;
 import com.dormrental.enums.UserRole;
+import com.dormrental.exception.ValidationException;
 import com.dormrental.model.User;
 import com.dormrental.service.AuthService;
 import java.util.List;
@@ -47,36 +48,27 @@ public class AdminMenu extends Menu {
         entries.get(index).action().run();
     }
 
+    // Errors thrown by the services are shown by Menu, which also keeps the stack trace of anything unexpected.
+    // Catching RuntimeException here would hide bugs, and would print "null" when an exception has no message.
+
     private void runDailyTasks() {
-        try {
-            String summary = ctx.runDailyTasks();
-            if (summary == null || summary.isBlank()) {
-                Display.success("Daily tasks completed.");
-            } else {
-                Display.success(summary);
-            }
-        } catch (RuntimeException e) {
-            Display.error(e.getMessage());
-        }
+        String summary = ctx.runDailyTasks();
+        Display.success(summary == null || summary.isBlank() ? "Daily tasks completed." : summary);
     }
 
     private void addUser() {
-        String username = in.readRequired("New username").trim();
-        String fullName = in.readRequired("Full name").trim();
-        String password = in.readRequired("Password (6+ characters)");
+        String username = in.readRequired("New username");
+        String fullName = in.readRequired("Full name");
+        String password = readNewPassword("Password (6+ characters)");
         UserRole role = in.readEnum("Role", UserRole.class);
 
-        try {
-            auth.registerUser(username, password, fullName, role);
-            Display.success("Account '" + username + "' created.");
-        } catch (RuntimeException e) {
-            Display.error(e.getMessage());
-        }
+        auth.registerUser(username, password, fullName, role);
+        Display.success("Account '" + username + "' created.");
     }
 
     private void listUsers() {
         List<User> users = auth.listUsers();
-        if (users == null || users.isEmpty()) {
+        if (users.isEmpty()) {
             Display.info("No staff accounts found.");
             return;
         }
@@ -84,15 +76,11 @@ public class AdminMenu extends Menu {
     }
 
     private void changePassword() {
-        String oldPassword = in.readRequired("Current password");
-        String newPassword = in.readRequired("New password (6+ characters)");
+        String oldPassword = readRequiredPassword("Current password");
+        String newPassword = readNewPassword("New password (6+ characters)");
 
-        try {
-            auth.changePassword(oldPassword, newPassword);
-            Display.success("Password changed.");
-        } catch (RuntimeException e) {
-            Display.error(e.getMessage());
-        }
+        auth.changePassword(oldPassword, newPassword);
+        Display.success("Password changed.");
     }
 
     private void loadSampleData() {
@@ -100,12 +88,30 @@ public class AdminMenu extends Menu {
             Display.info("Cancelled.");
             return;
         }
+        DataSeeder.seed(ctx);
+        Display.success("Sample data loaded.");
+    }
 
-        try {
-            DataSeeder.seed(ctx);
-            Display.success("Sample data loaded.");
-        } catch (RuntimeException e) {
-            Display.error(e.getMessage());
+    // ---- helpers -------------------------------------------------------------------------
+
+    /** A password that can't be left empty. Typing is hidden when a real terminal is available. */
+    private String readRequiredPassword(String prompt) {
+        while (true) {
+            String password = in.readPassword(prompt);
+            if (!password.isEmpty()) {
+                return password;
+            }
+            Display.error("This field is required.");
         }
+    }
+
+    /** Asks for a new password twice, so a typo can't lock someone out of an account they just made. */
+    private String readNewPassword(String prompt) {
+        String password = readRequiredPassword(prompt);
+        String again = in.readPassword("Type it again to confirm");
+        if (!password.equals(again)) {
+            throw new ValidationException("The two passwords don't match.");
+        }
+        return password;
     }
 }
