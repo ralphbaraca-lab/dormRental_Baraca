@@ -3,6 +3,7 @@ package com.dormrental.ui;
 import com.dormrental.config.AppContext;
 import com.dormrental.exception.DormRentalException;
 import com.dormrental.exception.InputClosedException;
+import java.util.Objects;
 
 /**
  * Base class for every menu screen. A subclass supplies a title, the option labels and what to
@@ -14,8 +15,8 @@ public abstract class Menu {
     protected final Tables tables;
 
     protected Menu(InputHelper in, AppContext ctx) {
-        this.in = in;
-        this.ctx = ctx;
+        this.in = Objects.requireNonNull(in, "in must not be null");
+        this.ctx = Objects.requireNonNull(ctx, "ctx must not be null");
         this.tables = new Tables(ctx);
     }
 
@@ -42,30 +43,41 @@ public abstract class Menu {
 
     public final void run() {
         while (true) {
-            Display.header(title());
-            beforeOptions();
             String[] options = options();
-            for (int i = 0; i < options.length; i++) {
-                System.out.printf("  %d. %s%n", i + 1, options[i]);
-            }
-            System.out.printf("  0. %s%n", exitLabel());
+            show(options);
 
             int choice = in.readInt("Choose", 0, options.length);
             if (choice == 0) {
                 return;
             }
-            try {
-                handle(choice);
-            } catch (InputClosedException e) {
-                throw e;
-            } catch (DormRentalException e) {
-                Display.error(e.getMessage());
-            } catch (RuntimeException e) {
-                Display.error("Unexpected error: " + e);
-            }
+            perform(choice);
             if (pauseAfterAction()) {
                 in.pause();
             }
+        }
+    }
+
+    private void show(String[] options) {
+        Display.header(title());
+        beforeOptions();
+        for (int i = 0; i < options.length; i++) {
+            Display.println("  " + (i + 1) + ". " + options[i]);
+        }
+        Display.println("  0. " + exitLabel());
+    }
+
+    /** Runs one choice, so that a failure in it shows a message and returns to the menu instead of ending the program. */
+    private void perform(int choice) {
+        try {
+            handle(choice);
+        } catch (InputClosedException e) {
+            throw e; // the keyboard input has ended, so there is nobody left to show a message to
+        } catch (DormRentalException e) {
+            Display.error(e.getMessage());
+        } catch (RuntimeException e) {
+            // Not an expected business error, so it is probably a bug: keep the stack trace for whoever fixes it.
+            Display.error("Unexpected error: " + e);
+            e.printStackTrace();
         }
     }
 }
