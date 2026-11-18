@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.util.Objects;
 
 public class Tenant extends Person {
+    // Keep this value: changing it (or the fields below) makes tenants already saved to disk unreadable.
     private static final long serialVersionUID = 1L;
 
     private final Gender gender;
@@ -21,16 +22,19 @@ public class Tenant extends Person {
         super(id, firstName, lastName, email, phone);
         this.gender = Objects.requireNonNull(gender, "gender must not be null");
         this.registeredOn = LocalDate.now();
-        setSchool(school);
-        setHomeAddress(homeAddress);
-        setGuardianName(guardianName);
-        setGuardianPhone(guardianPhone);
+        // Assigned directly instead of through the setters: calling overridable methods from a
+        // constructor would run a subclass's version before the subclass has been set up.
+        this.school = normalizeOptional(school);
+        this.homeAddress = normalizeOptional(homeAddress);
+        this.guardianName = normalizeOptional(guardianName);
+        this.guardianPhone = normalizeOptional(guardianPhone);
     }
 
     public Gender getGender() {
         return gender;
     }
 
+    /** Optional details below are trimmed, and a blank value is stored as null. */
     public String getSchool() {
         return school;
     }
@@ -75,10 +79,13 @@ public class Tenant extends Person {
         this.active = active;
     }
 
+    /** Includes the id and name, so a printed tenant can be told apart from another one. */
     @Override
     public String toString() {
         return "Tenant{" +
-                "gender=" + gender +
+                "id=" + getId() +
+                ", name='" + getFullName() + '\'' +
+                ", gender=" + gender +
                 ", school='" + school + '\'' +
                 ", homeAddress='" + homeAddress + '\'' +
                 ", guardianName='" + guardianName + '\'' +
