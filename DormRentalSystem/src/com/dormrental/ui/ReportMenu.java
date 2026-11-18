@@ -2,7 +2,6 @@ package com.dormrental.ui;
 
 import com.dormrental.config.AppContext;
 import com.dormrental.service.ReportService;
-
 import java.time.LocalDate;
 import java.time.YearMonth;
 
@@ -36,18 +35,28 @@ public class ReportMenu extends Menu {
                 Display.print(service.occupancyReport());
                 break;
             case 2:
-                int year = in.readInt("Year", 2000, 2100);
-                int month = in.readInt("Month", 1, 12);
-                Display.print(service.revenueReport(YearMonth.of(year, month)));
+                revenue();
                 break;
             case 3:
                 Display.print(service.overdueReport(LocalDate.now()));
                 break;
             case 4:
-                Display.print(service.tenantLedger(in.readId("Tenant ID"), LocalDate.now()));
+                ledger();
                 break;
             default:
                 break;
         }
+    }
+
+    private void revenue() {
+        int year = in.readInt("Year", 2000, 2100);
+        int month = in.readInt("Month", 1, 12);
+        Display.print(service.revenueReport(YearMonth.of(year, month)));
+    }
+
+    private void ledger() {
+        Display.print(tables.tenants(ctx.getTenantService().listTenants()));
+        String tenantId = in.readId("Tenant ID");
+        Display.print(service.tenantLedger(tenantId, LocalDate.now()));
     }
 }
