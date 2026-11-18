@@ -2,21 +2,36 @@ package com.dormrental.util;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /** Tiny helper that renders rows as an aligned plain-text table. */
 public class TextTable {
+    private static final String EMPTY_NOTICE = "  (no records)";
+    private static final String NO_VALUE = "-";
+    private static final String CELL_SEPARATOR = " | ";
+    private static final String RULE_SEPARATOR = "-+-";
+
     private final String[] headers;
     private final List<String[]> rows = new ArrayList<>();
 
     public TextTable(String... headers) {
-        this.headers = headers;
+        Objects.requireNonNull(headers, "headers must not be null");
+        if (headers.length == 0) {
+            throw new IllegalArgumentException("A table needs at least one column.");
+        }
+        this.headers = headers.clone(); // so changing the caller's array later can't change the table
+        for (String header : this.headers) {
+            Objects.requireNonNull(header, "a header must not be null");
+        }
     }
 
+    /** Missing cells show as "-", and so do nulls. Extra cells beyond the number of columns are ignored. */
     public TextTable addRow(Object... cells) {
+        Object[] given = cells == null ? new Object[0] : cells;
         String[] row = new String[headers.length];
         for (int i = 0; i < headers.length; i++) {
-            Object cell = i < cells.length ? cells[i] : null;
-            row[i] = cell == null ? "-" : String.valueOf(cell);
+            Object cell = i < given.length ? given[i] : null;
+            row[i] = cell == null ? NO_VALUE : singleLine(String.valueOf(cell));
         }
         rows.add(row);
         return this;
@@ -27,9 +42,27 @@ public class TextTable {
     }
 
     public String render() {
+        String newline = System.lineSeparator();
         if (rows.isEmpty()) {
-            return "  (no records)" + System.lineSeparator();
+            return EMPTY_NOTICE + newline;
         }
+
+        int[] widths = columnWidths();
+        String[] rule = new String[widths.length];
+        for (int i = 0; i < widths.length; i++) {
+            rule[i] = "-".repeat(widths[i]);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        appendLine(sb, headers, widths, CELL_SEPARATOR);
+        appendLine(sb, rule, widths, RULE_SEPARATOR);
+        for (String[] row : rows) {
+            appendLine(sb, row, widths, CELL_SEPARATOR);
+        }
+        return sb.toString();
+    }
+
+    private int[] columnWidths() {
         int[] widths = new int[headers.length];
         for (int i = 0; i < headers.length; i++) {
             widths[i] = headers[i].length();
@@ -39,40 +72,24 @@ public class TextTable {
                 widths[i] = Math.max(widths[i], row[i].length());
             }
         }
-
-        StringBuilder sb = new StringBuilder();
-        appendRow(sb, headers, widths);
-        sb.append("  ");
-        for (int i = 0; i < widths.length; i++) {
-            sb.append(repeat('-', widths[i]));
-            if (i < widths.length - 1) {
-                sb.append("-+-");
-            }
-        }
-        sb.append(System.lineSeparator());
-        for (String[] row : rows) {
-            appendRow(sb, row, widths);
-        }
-        return sb.toString();
+        return widths;
     }
 
-    private void appendRow(StringBuilder sb, String[] cells, int[] widths) {
+    /** One line: every cell but the last is padded to its column width, so the columns line up. */
+    private static void appendLine(StringBuilder sb, String[] cells, int[] widths, String separator) {
         sb.append("  ");
         for (int i = 0; i < cells.length; i++) {
             sb.append(cells[i]);
             if (i < cells.length - 1) {
-                sb.append(repeat(' ', widths[i] - cells[i].length()));
-                sb.append(" | ");
+                sb.append(" ".repeat(widths[i] - cells[i].length()));
+                sb.append(separator);
             }
         }
         sb.append(System.lineSeparator());
     }
 
-    private static String repeat(char c, int count) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < count; i++) {
-            sb.append(c);
-        }
-        return sb.toString();
+    /** A line break or tab inside a cell (for example in a note) would push the rest of the table out of line. */
+    private static String singleLine(String text) {
+        return text.replaceAll("[\\r\\n\\t]+", " ");
     }
 }
