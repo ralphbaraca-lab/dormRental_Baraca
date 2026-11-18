@@ -1,5 +1,6 @@
 package com.dormrental.config;
 
+import com.dormrental.exception.DormRentalException;
 import com.dormrental.model.Dormitory;
 import com.dormrental.model.Lease;
 import com.dormrental.model.MaintenanceRequest;
@@ -19,11 +20,30 @@ import com.dormrental.service.ReportService;
 import com.dormrental.service.RoomService;
 import com.dormrental.service.TenantService;
 import com.dormrental.service.VisitorService;
-
+import java.io.IOException;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.time.LocalDate;
+import java.util.Locale;
+import java.util.Objects;
 
 /** Creates the repositories and services once and hands them out. This is the app's "wiring" class. */
 public class AppContext {
+    private static final String LOCK_FILE_NAME = ".lock";
+
+    /**
+     * Held for as long as the program runs, so no second copy can use the same data folder.
+     * Never read; the field only keeps the lock (and its file) from being released early. The operating
+     * system releases it when the program ends. Null if this file system doesn't support locking.
+     */
+    @SuppressWarnings({"unused", "FieldCanBeLocal"})
+    private final FileLock dataDirLock;
+
     private final AuthService authService;
     private final DormitoryService dormitoryService;
     private final RoomService roomService;
@@ -35,6 +55,9 @@ public class AppContext {
     private final ReportService reportService;
 
     public AppContext(String dataDir) {
+        Objects.requireNonNull(dataDir, "dataDir must not be null");
+        this.dataDirLock = lockDataDir(dataDir);
+
         Repository<User> users = new FileRepository<>(dataDir, "users", "USR");
         Repository<Dormitory> dormitories = new FileRepository<>(dataDir, "dormitories", "DORM");
         Repository<Room> rooms = new FileRepository<>(dataDir, "rooms", "RM");
@@ -56,13 +79,47 @@ public class AppContext {
                 leaseService, paymentService, maintenanceService);
     }
 
+    /**
+     * Each repository loads its whole file into memory and rewrites the whole file on every change.
+     * Two copies of the program on the same folder would overwrite each other's changes, so the second
+     * one is refused. Any other problem (a read-only folder, a file system that can't lock) is not
+     * reported here: the repositories report real trouble with the data files themselves.
+     */
+    private static FileLock lockDataDir(String dataDir) {
+        try {
+            Path dir = Paths.get(dataDir);
+            Files.createDirectories(dir);
+            FileChannel channel = FileChannel.open(dir.resolve(LOCK_FILE_NAME),
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            FileLock lock;
+            try {
+                lock = channel.tryLock();
+            } catch (OverlappingFileLockException e) {
+                lock = null; // already locked by this same program
+            }
+            if (lock == null) {
+                try {
+                    channel.close();
+                } catch (IOException ignored) {
+                    // nothing useful to do; the message below is the one that matters
+                }
+                throw new DormRentalException("The data folder '" + dataDir
+                        + "' is already in use by another copy of this program. Close that copy first.", null);
+            }
+            return lock;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
     /** Closes expired leases, flags overdue bills and adds late fees. Safe to run as often as you like. */
     public String runDailyTasks() {
         LocalDate today = LocalDate.now();
         int closed = leaseService.closeExpiredLeases(today);
         int overdue = paymentService.refreshOverdue(today);
         int fees = paymentService.applyLateFees(today);
-        return String.format("Daily tasks done: %d lease(s) closed, %d bill(s) marked overdue, %d late fee(s) added.",
+        return String.format(Locale.ROOT,
+                "Daily tasks done: %d lease(s) closed, %d bill(s) marked overdue, %d late fee(s) added.",
                 closed, overdue, fees);
     }
 
