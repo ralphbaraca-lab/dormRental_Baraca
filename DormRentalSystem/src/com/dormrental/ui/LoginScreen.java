@@ -26,6 +26,7 @@ public class LoginScreen {
                 + "', then change the password under Administration.");
         Display.info("  Leave Username blank to exit. Max attempts: " + MAX_ATTEMPTS + ".");
 
+        AuthService authService = ctx.getAuthService();
         int failedAttempts = 0;
 
         while (failedAttempts < MAX_ATTEMPTS) {
@@ -34,29 +35,27 @@ public class LoginScreen {
                 Display.info("Exiting login.");
                 return false;
             }
-
             String username = rawUsername.trim();
-            String rawPassword = in.readLine("Password");
-            String password = rawPassword == null ? "" : rawPassword;
+
+            // A null here means the input ended (for example Ctrl+D), not that the password is empty,
+            // so leave instead of counting it as a wrong guess. An empty password is still a normal attempt.
+            String password = in.readLine("Password");
+            if (password == null) {
+                Display.info("Exiting login.");
+                return false;
+            }
 
             // Password checking is deliberately slow now (PBKDF2), so tell the user something is happening.
             Display.info("  Checking credentials...");
 
             try {
-                AuthService authService = ctx.getAuthService();
-                authService.login(username, password);
-
-                User currentUser = authService.getCurrentUser();
-                String displayName = (currentUser != null && currentUser.getFullName() != null)
-                        ? currentUser.getFullName()
-                        : username;
-
-                Display.success("Welcome, " + displayName + "!");
+                User user = authService.login(username, password);
+                Display.success("Welcome, " + displayName(user, username) + "!");
                 return true;
             } catch (AuthenticationException e) {
                 failedAttempts++;
-                int remaining = MAX_ATTEMPTS - failedAttempts;
                 Display.error(e.getMessage());
+                int remaining = MAX_ATTEMPTS - failedAttempts;
                 if (remaining > 0) {
                     Display.info("  Attempts remaining: " + remaining);
                 }
@@ -69,5 +68,11 @@ public class LoginScreen {
 
         Display.error("Maximum login attempts reached. Returning to exit.");
         return false;
+    }
+
+    /** The user's full name, or the username they typed if the account has no name. */
+    private static String displayName(User user, String fallback) {
+        String fullName = user == null ? null : user.getFullName();
+        return Validator.isBlank(fullName) ? fallback : fullName;
     }
 }
