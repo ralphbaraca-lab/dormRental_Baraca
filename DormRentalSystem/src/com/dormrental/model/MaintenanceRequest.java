@@ -5,8 +5,10 @@ import com.dormrental.enums.MaintenanceStatus;
 
 import java.io.Serializable;
 import java.time.LocalDate;
+import java.util.Objects;
 
 public class MaintenanceRequest implements Identifiable, Serializable {
+    // Keep this value: changing it (or the fields below) makes requests already saved to disk unreadable.
     private static final long serialVersionUID = 1L;
 
     private final String id;
@@ -23,12 +25,12 @@ public class MaintenanceRequest implements Identifiable, Serializable {
 
     public MaintenanceRequest(String id, String roomId, String tenantId, String title,
                               String description, MaintenancePriority priority) {
-        this.id = id;
-        this.roomId = roomId;
-        this.tenantId = tenantId;
-        this.title = title;
-        this.description = description;
-        this.priority = priority;
+        this.id = Objects.requireNonNull(id, "id must not be null");
+        this.roomId = Objects.requireNonNull(roomId, "roomId must not be null");
+        this.tenantId = tenantId; // the only optional one
+        this.title = Objects.requireNonNull(title, "title must not be null");
+        this.description = Objects.requireNonNull(description, "description must not be null");
+        this.priority = Objects.requireNonNull(priority, "priority must not be null");
         this.reportedOn = LocalDate.now();
     }
 
@@ -41,6 +43,7 @@ public class MaintenanceRequest implements Identifiable, Serializable {
         return roomId;
     }
 
+    /** The tenant who reported it, or null when staff reported it. */
     public String getTenantId() {
         return tenantId;
     }
@@ -62,7 +65,7 @@ public class MaintenanceRequest implements Identifiable, Serializable {
     }
 
     public void setStatus(MaintenanceStatus status) {
-        this.status = status;
+        this.status = Objects.requireNonNull(status, "status must not be null");
     }
 
     public LocalDate getReportedOn() {
@@ -95,5 +98,19 @@ public class MaintenanceRequest implements Identifiable, Serializable {
 
     public boolean isOpen() {
         return status != MaintenanceStatus.RESOLVED;
+    }
+
+    @Override
+    public String toString() {
+        return "MaintenanceRequest{" +
+                "id=" + id +
+                ", roomId=" + roomId +
+                ", title='" + title + '\'' +
+                ", priority=" + priority +
+                ", status=" + status +
+                ", reportedOn=" + reportedOn +
+                ", resolvedOn=" + resolvedOn +
+                ", assignedTo=" + assignedTo +
+                '}';
     }
 }
