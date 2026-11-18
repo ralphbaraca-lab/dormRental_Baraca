@@ -37,13 +37,7 @@ public class LoginScreen {
             }
             String username = rawUsername.trim();
 
-            // A null here means the input ended (for example Ctrl+D), not that the password is empty,
-            // so leave instead of counting it as a wrong guess. An empty password is still a normal attempt.
-            String password = in.readLine("Password");
-            if (password == null) {
-                Display.info("Exiting login.");
-                return false;
-            }
+            String password = in.readPassword("Password"); // hidden while typing when a real terminal is available
 
             // Password checking is deliberately slow now (PBKDF2), so tell the user something is happening.
             Display.info("  Checking credentials...");
