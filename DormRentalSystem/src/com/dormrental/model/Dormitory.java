@@ -1,11 +1,15 @@
+
 package com.dormrental.model;
 
 import com.dormrental.enums.DormType;
-
 import java.io.Serializable;
 
-/** A dormitory building. Rooms point back to it through their dormitoryId. */
+/**
+ * Represents a dormitory building.
+ * Each dormitory can contain multiple rooms.
+ */
 public class Dormitory implements Identifiable, Serializable {
+
     private static final long serialVersionUID = 1L;
 
     private final String id;
@@ -14,48 +18,87 @@ public class Dormitory implements Identifiable, Serializable {
     private DormType type;
     private String contactNumber;
 
-    public Dormitory(String id, String name, String address, DormType type, String contactNumber) {
-        this.id = id;
-        this.name = name;
-        this.address = address;
-        this.type = type;
-        this.contactNumber = contactNumber;
+    // Constructor
+    public Dormitory(String id, String name, String address,
+                     DormType type, String contactNumber) {
+
+        this.id = requireText(id, "Dormitory ID");
+        setName(name);
+        setAddress(address);
+        setType(type);
+        setContactNumber(contactNumber);
     }
 
+    // Validates required text fields
+    private static String requireText(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(
+                fieldName + " cannot be empty."
+            );
+        }
+
+        return value.trim();
+    }
+
+    // Returns the dormitory ID
     @Override
     public String getId() {
         return id;
     }
 
+    // Name
     public String getName() {
         return name;
     }
 
     public void setName(String name) {
-        this.name = name;
+        this.name = requireText(name, "Dormitory name");
     }
 
+    // Address
     public String getAddress() {
         return address;
     }
 
     public void setAddress(String address) {
-        this.address = address;
+        this.address = requireText(address, "Dormitory address");
     }
 
+    // Dormitory type
     public DormType getType() {
         return type;
     }
 
     public void setType(DormType type) {
+        if (type == null) {
+            throw new IllegalArgumentException(
+                "Dormitory type cannot be null."
+            );
+        }
+
         this.type = type;
     }
 
+    // Contact number
     public String getContactNumber() {
         return contactNumber;
     }
 
     public void setContactNumber(String contactNumber) {
-        this.contactNumber = contactNumber;
+        this.contactNumber = requireText(
+            contactNumber, "Contact number"
+        );
+    }
+
+    // Returns a readable dormitory description
+    @Override
+    public String toString() {
+        return "Dormitory {" +
+                "ID='" + id + '\'' +
+                ", Name='" + name + '\'' +
+                ", Address='" + address + '\'' +
+                ", Type='" + type + '\'' +
+                ", Contact='" + contactNumber + '\'' +
+                '}';
     }
 }
