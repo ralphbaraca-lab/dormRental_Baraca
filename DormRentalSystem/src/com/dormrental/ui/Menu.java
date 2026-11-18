@@ -1,3 +1,4 @@
+
 package com.dormrental.ui;
 
 import com.dormrental.config.AppContext;
@@ -6,77 +7,165 @@ import com.dormrental.exception.InputClosedException;
 import java.util.Objects;
 
 /**
- * Base class for every menu screen. A subclass supplies a title, the option labels and what to
- * do for each choice; this class draws the menu, reads the choice and reports errors nicely.
+ * Base class for all menu screens in the Dorm Rental System.
+ *
+ * Subclasses provide their own title, menu options,
+ * and action handling through abstract methods.
  */
 public abstract class Menu {
+
     protected final InputHelper in;
     protected final AppContext ctx;
     protected final Tables tables;
 
+    // Constructor
     protected Menu(InputHelper in, AppContext ctx) {
-        this.in = Objects.requireNonNull(in, "in must not be null");
-        this.ctx = Objects.requireNonNull(ctx, "ctx must not be null");
+
+        this.in = Objects.requireNonNull(
+            in, "InputHelper cannot be null."
+        );
+
+        this.ctx = Objects.requireNonNull(
+            ctx, "AppContext cannot be null."
+        );
+
         this.tables = new Tables(ctx);
     }
 
+    // Returns the menu title
     protected abstract String title();
 
+    // Returns available menu options
     protected abstract String[] options();
 
-    /** Called with the number (1..n) of the option the user picked. */
+    /**
+     * Handles the selected menu option.
+     *
+     * @param choice selected option number (1 to n)
+     */
     protected abstract void handle(int choice);
 
-    /** Label for option 0. */
+    // Returns the exit option label
     protected String exitLabel() {
         return "Back";
     }
 
-    /** Hook for menus that want to print something above the options. */
+    // Hook for displaying additional information before menu options
     protected void beforeOptions() {
+        // Optional implementation by subclasses
     }
 
-    /** Menus that only open other menus return false so the user is not asked to press Enter on the way back. */
+    // Determines whether to pause after executing an action
     protected boolean pauseAfterAction() {
         return true;
     }
 
+    /**
+     * Starts the menu loop.
+     * Continues displaying options until the user selects exit.
+     */
     public final void run() {
-        while (true) {
-            String[] options = options();
-            show(options);
 
-            int choice = in.readInt("Choose", 0, options.length);
+        while (true) {
+
+            String[] menuOptions = options();
+
+            validateOptions(menuOptions);
+
+            show(menuOptions);
+
+            int choice = in.readInt(
+                "Choose", 0, menuOptions.length
+            );
+
+            // Exit or return to previous menu
             if (choice == 0) {
                 return;
             }
+
             perform(choice);
+
+            // Pause before displaying the menu again
             if (pauseAfterAction()) {
                 in.pause();
             }
         }
     }
 
-    private void show(String[] options) {
-        Display.header(title());
-        beforeOptions();
-        for (int i = 0; i < options.length; i++) {
-            Display.println("  " + (i + 1) + ". " + options[i]);
+    /**
+     * Validates menu options before displaying them.
+     */
+    private void validateOptions(String[] options) {
+
+        Objects.requireNonNull(
+            options, "Menu options cannot be null."
+        );
+
+        if (options.length == 0) {
+            throw new IllegalStateException(
+                "A menu must contain at least one option."
+            );
         }
+
+        for (String option : options) {
+
+            if (option == null || option.isBlank()) {
+                throw new IllegalStateException(
+                    "Menu options cannot contain empty labels."
+                );
+            }
+        }
+    }
+
+    /**
+     * Displays the menu title, additional information,
+     * and available options.
+     */
+    private void show(String[] options) {
+
+        Display.header(title());
+
+        beforeOptions();
+
+        for (int i = 0; i < options.length; i++) {
+
+            Display.println(
+                "  " + (i + 1) + ". " + options[i]
+            );
+        }
+
         Display.println("  0. " + exitLabel());
     }
 
-    /** Runs one choice, so that a failure in it shows a message and returns to the menu instead of ending the program. */
+    /**
+     * Executes the selected menu action.
+     * Handles application errors without terminating the menu.
+     */
     private void perform(int choice) {
+
         try {
+
             handle(choice);
+
         } catch (InputClosedException e) {
-            throw e; // the keyboard input has ended, so there is nobody left to show a message to
+
+            // Propagate closed input to the application.
+            throw e;
+
         } catch (DormRentalException e) {
+
+            // Expected application or business errors.
             Display.error(e.getMessage());
+
         } catch (RuntimeException e) {
-            // Not an expected business error, so it is probably a bug: keep the stack trace for whoever fixes it.
-            Display.error("Unexpected error: " + e);
+
+            // Unexpected programming or runtime errors.
+            Display.error(
+                "An unexpected error occurred. " +
+                "Please contact the system administrator."
+            );
+
+            // Preserve technical details for debugging.
             e.printStackTrace();
         }
     }
